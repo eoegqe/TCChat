@@ -40,20 +40,6 @@ async function authenticate(request, env) {
     return { error: fail("invalid_identity", "TC Accounts did not return a valid account identity.", 401) };
   }
 
-  const membership = await env.TC.prepare(
-    "SELECT status FROM tc_service_memberships WHERE user_id = ? AND service_tag = 'Eggser' LIMIT 1"
-  ).bind(String(identity.sub)).first();
-
-  if (!membership || membership.status !== "active") {
-    return {
-      error: fail(
-        "eggser_subaccount_required",
-        "TC Chat is available here only to TC accounts with an active Eggser sub-account.",
-        403
-      )
-    };
-  }
-
   return {
     user: {
       id: String(identity.sub),
@@ -64,7 +50,7 @@ async function authenticate(request, env) {
 
 async function requireParticipant(env, conversationId, userId) {
   return env.TC.prepare(
-    "SELECT c.id, c.type, c.title, c.service_tag FROM tc_chat_conversations c JOIN tc_chat_participants p ON p.conversation_id = c.id WHERE c.id = ? AND p.user_id = ? AND c.service_tag = 'Eggser' LIMIT 1"
+    "SELECT c.id, c.type, c.title, c.service_tag FROM tc_chat_conversations c JOIN tc_chat_participants p ON p.conversation_id = c.id WHERE c.id = ? AND p.user_id = ? LIMIT 1"
   ).bind(conversationId, userId).first();
 }
 
@@ -82,21 +68,21 @@ async function api(request, env, url) {
   const method = request.method;
 
   if (path === "/api/me" && method === "GET") {
-    return json({ user, service: { tag: "Eggser", label: "Eggser" } });
+    return json({ user, service: { tag: "TC", label: "TC Chat" } });
   }
 
   if (path === "/api/directory" && method === "GET") {
     const query = (url.searchParams.get("q") || "").trim().slice(0, 32);
     if (query.length < 2) return json({ users: [] });
     const result = await env.TC.prepare(
-      "SELECT u.id, u.username FROM users u JOIN tc_service_memberships sm ON sm.user_id = u.id WHERE sm.service_tag = 'Eggser' AND sm.status = 'active' AND u.status = 'active' AND u.id <> ? AND u.username LIKE ? COLLATE NOCASE AND NOT EXISTS (SELECT 1 FROM tc_chat_blocks b WHERE (b.blocker_id = ? AND b.blocked_id = u.id) OR (b.blocker_id = u.id AND b.blocked_id = ?)) ORDER BY u.username COLLATE NOCASE LIMIT 25"
+      "SELECT u.id, u.username FROM users u WHERE u.status = 'active' AND u.id <> ? AND u.username LIKE ? COLLATE NOCASE AND NOT EXISTS (SELECT 1 FROM tc_chat_blocks b WHERE (b.blocker_id = ? AND b.blocked_id = u.id) OR (b.blocker_id = u.id AND b.blocked_id = ?)) ORDER BY u.username COLLATE NOCASE LIMIT 25"
     ).bind(user.id, `%${query}%`, user.id, user.id).all();
     return json({ users: result.results || [] });
   }
 
   if (path === "/api/conversations" && method === "GET") {
     const result = await env.TC.prepare(
-      "SELECT c.id, c.type, c.title, c.created_at, c.updated_at, (SELECT m.body FROM tc_chat_messages m WHERE m.conversation_id = c.id AND m.deleted_at IS NULL ORDER BY m.created_at DESC LIMIT 1) AS last_message, (SELECT m.created_at FROM tc_chat_messages m WHERE m.conversation_id = c.id AND m.deleted_at IS NULL ORDER BY m.created_at DESC LIMIT 1) AS last_message_at, (SELECT COUNT(*) FROM tc_chat_participants p2 WHERE p2.conversation_id = c.id) AS participant_count FROM tc_chat_conversations c JOIN tc_chat_participants p ON p.conversation_id = c.id WHERE p.user_id = ? AND c.service_tag = 'Eggser' ORDER BY COALESCE(last_message_at, c.updated_at) DESC LIMIT 100"
+      "SELECT c.id, c.type, c.title, c.created_at, c.updated_at, (SELECT m.body FROM tc_chat_messages m WHERE m.conversation_id = c.id AND m.deleted_at IS NULL ORDER BY m.created_at DESC LIMIT 1) AS last_message, (SELECT m.created_at FROM tc_chat_messages m WHERE m.conversation_id = c.id AND m.deleted_at IS NULL ORDER BY m.created_at DESC LIMIT 1) AS last_message_at, (SELECT COUNT(*) FROM tc_chat_participants p2 WHERE p2.conversation_id = c.id) AS participant_count FROM tc_chat_conversations c JOIN tc_chat_participants p ON p.conversation_id = c.id WHERE p.user_id = ? ORDER BY COALESCE(last_message_at, c.updated_at) DESC LIMIT 100"
     ).bind(user.id).all();
 
     const conversations = result.results || [];
@@ -121,10 +107,10 @@ async function api(request, env, url) {
 
     const placeholders = participantIds.map(() => "?").join(",");
     const eligible = await env.TC.prepare(
-      `SELECT u.id FROM users u JOIN tc_service_memberships sm ON sm.user_id = u.id WHERE u.id IN (${placeholders}) AND u.status = 'active' AND sm.service_tag = 'Eggser' AND sm.status = 'active'`
+      `SELECT id FROM users WHERE id IN (${placeholders}) AND status = 'active'`
     ).bind(...participantIds).all();
     if ((eligible.results || []).length !== participantIds.length) {
-      return fail("eggser_membership_required", "Every participant must have an active Eggser sub-account.", 403);
+      return fail("participant_unavailable", "Every participant must have an active TC Account.", 404);
     }
 
     for (const otherId of participantIds.filter(value => value !== user.id)) {
@@ -136,7 +122,7 @@ async function api(request, env, url) {
     const type = participantIds.length === 2 ? "direct" : "group";
     if (type === "direct") {
       const existing = await env.TC.prepare(
-        "SELECT c.id FROM tc_chat_conversations c JOIN tc_chat_participants p1 ON p1.conversation_id = c.id AND p1.user_id = ? JOIN tc_chat_participants p2 ON p2.conversation_id = c.id AND p2.user_id = ? WHERE c.type = 'direct' AND c.service_tag = 'Eggser' LIMIT 1"
+        "SELECT c.id FROM tc_chat_conversations c JOIN tc_chat_participants p1 ON p1.conversation_id = c.id AND p1.user_id = ? JOIN tc_chat_participants p2 ON p2.conversation_id = c.id AND p2.user_id = ? WHERE c.type = 'direct' LIMIT 1"
       ).bind(participantIds[0], participantIds[1]).first();
       if (existing) return json({ conversation_id: existing.id, existing: true });
     }
@@ -145,7 +131,7 @@ async function api(request, env, url) {
     const timestamp = now();
     const title = type === "group" && typeof body?.title === "string" ? body.title.trim().slice(0, 80) : null;
     await env.TC.prepare(
-      "INSERT INTO tc_chat_conversations (id, service_tag, type, title, created_by, created_at, updated_at) VALUES (?, 'Eggser', ?, ?, ?, ?, ?)"
+      "INSERT INTO tc_chat_conversations (id, service_tag, type, title, created_by, created_at, updated_at) VALUES (?, 'TC', ?, ?, ?, ?, ?)"
     ).bind(conversationId, type, title || null, user.id, timestamp, timestamp).run();
 
     const insert = env.TC.prepare(
@@ -189,10 +175,10 @@ async function api(request, env, url) {
       "SELECT user_id FROM tc_chat_participants WHERE conversation_id = ? AND user_id <> ?"
     ).bind(conversationId, user.id).all();
     for (const recipient of recipients.results || []) {
-      const stillEligible = await env.TC.prepare(
-        "SELECT 1 AS ok FROM tc_service_memberships WHERE user_id = ? AND service_tag = 'Eggser' AND status = 'active'"
+      const activeRecipient = await env.TC.prepare(
+        "SELECT 1 AS ok FROM users WHERE id = ? AND status = 'active'"
       ).bind(recipient.user_id).first();
-      if (!stillEligible || await blockedEitherWay(env, user.id, recipient.user_id)) {
+      if (!activeRecipient || await blockedEitherWay(env, user.id, recipient.user_id)) {
         return fail("recipient_unavailable", "A participant is no longer available for this conversation.", 403);
       }
     }
@@ -222,9 +208,9 @@ async function api(request, env, url) {
     const blockedId = blockMatch[1];
     if (blockedId === user.id) return fail("invalid_user", "You cannot block your own account.", 400);
     const target = await env.TC.prepare(
-      "SELECT 1 AS ok FROM tc_service_memberships WHERE user_id = ? AND service_tag = 'Eggser' AND status = 'active'"
+      "SELECT 1 AS ok FROM users WHERE id = ? AND status = 'active'"
     ).bind(blockedId).first();
-    if (!target) return fail("user_not_found", "That Eggser user could not be found.", 404);
+    if (!target) return fail("user_not_found", "That TC user could not be found.", 404);
     await env.TC.prepare(
       "INSERT OR IGNORE INTO tc_chat_blocks (blocker_id, blocked_id, created_at) VALUES (?, ?, ?)"
     ).bind(user.id, blockedId, now()).run();
