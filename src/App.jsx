@@ -273,7 +273,6 @@ function App() {
         bundle = registrationBundle;
         setKeyBundle(bundle);
       }
-      }
       const unlocked = await unlockPrivateKey(bundle, keyPassphrase);
       setPrivateKey(unlocked);
       setKeyPassphrase("");
