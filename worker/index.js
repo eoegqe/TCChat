@@ -84,7 +84,7 @@ async function api(request, env, url) {
     const privateKeyIv = typeof body?.private_key_iv === "string" ? body.private_key_iv : "";
     const salt = typeof body?.salt === "string" ? body.salt : "";
     const iterations = Number(body?.kdf_iterations);
-    if (publicKey?.kty !== "RSA" || typeof publicKey.n !== "string" || typeof publicKey.e !== "string" || encryptedPrivateKey.length < 100 || encryptedPrivateKey.length > 10000 || !/^[A-Za-z0-9+/]+=*$/.test(encryptedPrivateKey) || !/^[A-Za-z0-9+/]{16}$/.test(privateKeyIv) || !/^[A-Za-z0-9+/]{24}$/.test(salt) || !Number.isInteger(iterations) || iterations < 100000 || iterations > 2000000) return fail("invalid_key_bundle", "The encryption recovery bundle is invalid.", 400);
+    if (publicKey?.kty !== "RSA" || typeof publicKey.n !== "string" || publicKey.n.length < 500 || publicKey.n.length > 600 || publicKey.e !== "AQAB" || publicKey.alg !== "RSA-OAEP-256" || encryptedPrivateKey.length < 100 || encryptedPrivateKey.length > 10000 || !/^[A-Za-z0-9+/]+=*$/.test(encryptedPrivateKey) || !/^[A-Za-z0-9+/]{16}$/.test(privateKeyIv) || !/^[A-Za-z0-9+/]{22}==$/.test(salt) || !Number.isInteger(iterations) || iterations < 100000 || iterations > 2000000) return fail("invalid_key_bundle", "The encryption recovery bundle is invalid.", 400);
     const existing = await env.TC.prepare("SELECT user_id FROM tc_chat_user_keys WHERE user_id = ?").bind(user.id).first();
     if (existing) return fail("key_bundle_exists", "An encryption recovery key is already registered for this account.", 409);
     const timestamp = now();
@@ -139,6 +139,14 @@ async function api(request, env, url) {
     ).bind(...participantIds).all();
     if ((eligible.results || []).length !== participantIds.length) {
       return fail("participant_unavailable", "Every participant must have an active TC Account.", 404);
+    }
+
+    const keyPlaceholders = participantIds.map(() => "?").join(",");
+    const registeredKeys = await env.TC.prepare(
+      "SELECT user_id FROM tc_chat_user_keys WHERE user_id IN (" + keyPlaceholders + ")"
+    ).bind(...participantIds).all();
+    if ((registeredKeys.results || []).length !== participantIds.length) {
+      return fail("encryption_setup_required", "Every participant must complete encryption setup before starting a conversation.", 409);
     }
 
     for (const otherId of participantIds.filter(value => value !== user.id)) {
