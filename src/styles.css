@@ -156,3 +156,10 @@ button:disabled { cursor: not-allowed; opacity: .45; }
   .conversation-intro { padding-top: 8px; }
   .auth-card { padding: 30px 24px; }
 }
+
+
+.key-input-label { display: flex; flex-direction: column; gap: 8px; margin: 0 0 15px; color: #c7c7c7; font-size: 12px; font-weight: 600; }
+.key-input-label input { width: 100%; min-height: 45px; padding: 0 13px; border: 1px solid #343434; border-radius: 9px; outline: none; background: #0b0b0b; color: #f4f4f5; font-size: 13px; }
+.key-input-label input:focus { border-color: #777; }
+.key-signout { display: block; margin: 15px auto 0; padding: 5px 9px; border: 0; background: transparent; color: #888; font-size: 11px; }
+.key-signout:hover { color: #ddd; }
