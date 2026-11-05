@@ -333,8 +333,8 @@ function App() {
 
   const conversationName = useCallback((conversation) => {
     if (!conversation) return "Conversation";
-    if (conversation.type === "group") return conversation.title || conversation.participants?.filter(person => person.id !== user?.id).map(person => person.username).join(", ") || "Group chat";
-    return conversation.participants?.find(person => person.id !== user?.id)?.username || "TC user";
+    if (conversation.type === "group") return conversation.title || conversation.participants?.filter(person => String(person.id) !== String(user?.id)).map(person => person.username).join(", ") || "Group chat";
+    return conversation.participants?.find(person => String(person.id) !== String(user?.id))?.username || "TC user";
   }, [user]);
 
   const activePeople = useMemo(() => activeConversation?.participants || [], [activeConversation]);
@@ -403,7 +403,7 @@ function App() {
   }
 
   async function blockActiveUser() {
-    const person = activePeople.find(item => item.id !== user?.id);
+    const person = activePeople.find(item => String(item.id) !== String(user?.id));
     if (!person) return;
     if (!window.confirm(`Block ${person.username}? They will no longer be able to start or continue conversations with you.`)) return;
     try {
