@@ -356,13 +356,12 @@ function App() {
           <div className="brand-mark"><MessageCircle size={25} /></div>
           <p className="eyebrow">THEEGGET CREATIONS</p>
           <h1>TC Chat</h1>
-          <p className="auth-copy">Messaging for TC service communities. Sign in with your TC Account to continue.</p>
+          <p className="auth-copy">Messaging for everyone with a TC Account. Sign in to continue.</p>
           {error && <div className="notice error-notice">{error}</div>}
           <button className="primary-button sign-in-button" onClick={() => startSignIn().catch(problem => setError(problem.message))}>
             Continue with TC Accounts <ArrowUpRight size={17} />
           </button>
           <div className="auth-foot"><LockKeyhole size={14} /> Your TC Account credentials stay with TC Accounts.</div>
-          <p className="service-note"><ShieldCheck size={15} /> Eggser access requires an active Eggser sub-account.</p>
         </section>
       </main>
     );
@@ -381,7 +380,7 @@ function App() {
 
         <div className="service-banner">
           <div className="service-icon"><Users size={18} /></div>
-          <div><strong>Eggser</strong><span>Service community</span></div>
+          <div><strong>TC Chat</strong><span>TC community messaging</span></div>
           <span className="service-dot" />
         </div>
 
