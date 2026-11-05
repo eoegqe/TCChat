@@ -1,0 +1,19 @@
+name = "tcchat"
+main = "worker/index.js"
+compatibility_date = "2026-11-05"
+
+[assets]
+directory = "./dist"
+binding = "ASSETS"
+not_found_handling = "single-page-application"
+run_worker_first = ["/api/*", "/internal/*"]
+
+[[d1_databases]]
+binding = "TC"
+database_name = "TC"
+database_id = "fd0e9d90-b443-4002-8378-f0d817fb415b"
+migrations_dir = "migrations"
+
+[vars]
+APP_ENV = "production"
+TC_ACCOUNTS_ORIGIN = "https://accounts.theegget.com"
