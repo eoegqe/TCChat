@@ -71,6 +71,34 @@ async function api(request, env, url) {
     return json({ user, service: { tag: "TC", label: "TC Chat" } });
   }
 
+  if (path === "/api/keys/self" && method === "GET") {
+    const bundle = await env.TC.prepare("SELECT public_key_jwk, encrypted_private_key, private_key_iv, salt, kdf_iterations FROM tc_chat_user_keys WHERE user_id = ?").bind(user.id).first();
+    return json({ key_bundle: bundle ? { public_key: JSON.parse(bundle.public_key_jwk), encrypted_private_key: bundle.encrypted_private_key, private_key_iv: bundle.private_key_iv, salt: bundle.salt, kdf_iterations: bundle.kdf_iterations } : null });
+  }
+
+  if (path === "/api/keys/self" && method === "POST") {
+    let body;
+    try { body = await request.json(); } catch { return fail("invalid_json", "The request body must be valid JSON.", 400); }
+    const publicKey = body?.public_key;
+    const encryptedPrivateKey = typeof body?.encrypted_private_key === "string" ? body.encrypted_private_key : "";
+    const privateKeyIv = typeof body?.private_key_iv === "string" ? body.private_key_iv : "";
+    const salt = typeof body?.salt === "string" ? body.salt : "";
+    const iterations = Number(body?.kdf_iterations);
+    if (publicKey?.kty !== "RSA" || typeof publicKey.n !== "string" || typeof publicKey.e !== "string" || encryptedPrivateKey.length < 100 || encryptedPrivateKey.length > 10000 || !/^[A-Za-z0-9+/]+=*$/.test(encryptedPrivateKey) || !/^[A-Za-z0-9+/]{16}$/.test(privateKeyIv) || !/^[A-Za-z0-9+/]{24}$/.test(salt) || !Number.isInteger(iterations) || iterations < 100000 || iterations > 2000000) return fail("invalid_key_bundle", "The encryption recovery bundle is invalid.", 400);
+    const existing = await env.TC.prepare("SELECT user_id FROM tc_chat_user_keys WHERE user_id = ?").bind(user.id).first();
+    if (existing) return fail("key_bundle_exists", "An encryption recovery key is already registered for this account.", 409);
+    const timestamp = now();
+    await env.TC.prepare("INSERT INTO tc_chat_user_keys (user_id, public_key_jwk, encrypted_private_key, private_key_iv, salt, kdf_iterations, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)").bind(user.id, JSON.stringify(publicKey), encryptedPrivateKey, privateKeyIv, salt, iterations, timestamp, timestamp).run();
+    return json({ success: true }, 201);
+  }
+
+  if (path === "/api/keys" && method === "GET") {
+    const requested = [...new Set((url.searchParams.get("user_ids") || "").split(",").map(value => value.trim()).filter(Boolean))];
+    if (!requested.length || requested.length > 10 || requested.some(value => value.length > 128)) return fail("invalid_key_request", "Request encryption keys for 1 to 10 TC users.", 400);
+    const placeholders = requested.map(() => "?").join(",");
+    const result = await env.TC.prepare("SELECT k.user_id AS id, k.public_key_jwk FROM tc_chat_user_keys k JOIN users u ON u.id = k.user_id WHERE u.status = 'active' AND k.user_id IN (" + placeholders + ")").bind(...requested).all();
+    return json({ keys: (result.results || []).map(item => ({ id: item.id, public_key: JSON.parse(item.public_key_jwk) })) });
+  }
   if (path === "/api/directory" && method === "GET") {
     const query = (url.searchParams.get("q") || "").trim().slice(0, 32);
     if (query.length < 2) return json({ users: [] });
@@ -82,7 +110,7 @@ async function api(request, env, url) {
 
   if (path === "/api/conversations" && method === "GET") {
     const result = await env.TC.prepare(
-      "SELECT c.id, c.type, c.title, c.created_at, c.updated_at, (SELECT m.body FROM tc_chat_messages m WHERE m.conversation_id = c.id AND m.deleted_at IS NULL ORDER BY m.created_at DESC LIMIT 1) AS last_message, (SELECT m.created_at FROM tc_chat_messages m WHERE m.conversation_id = c.id AND m.deleted_at IS NULL ORDER BY m.created_at DESC LIMIT 1) AS last_message_at, (SELECT COUNT(*) FROM tc_chat_participants p2 WHERE p2.conversation_id = c.id) AS participant_count FROM tc_chat_conversations c JOIN tc_chat_participants p ON p.conversation_id = c.id WHERE p.user_id = ? ORDER BY COALESCE(last_message_at, c.updated_at) DESC LIMIT 100"
+      "SELECT c.id, c.type, c.title, c.created_at, c.updated_at, (SELECT CASE WHEN m.encrypted_payload IS NOT NULL THEN 'Encrypted message' ELSE m.body END FROM tc_chat_messages m WHERE m.conversation_id = c.id AND m.deleted_at IS NULL ORDER BY m.created_at DESC LIMIT 1) AS last_message, (SELECT m.created_at FROM tc_chat_messages m WHERE m.conversation_id = c.id AND m.deleted_at IS NULL ORDER BY m.created_at DESC LIMIT 1) AS last_message_at, (SELECT COUNT(*) FROM tc_chat_participants p2 WHERE p2.conversation_id = c.id) AS participant_count FROM tc_chat_conversations c JOIN tc_chat_participants p ON p.conversation_id = c.id WHERE p.user_id = ? ORDER BY COALESCE(last_message_at, c.updated_at) DESC LIMIT 100"
     ).bind(user.id).all();
 
     const conversations = result.results || [];
@@ -150,10 +178,10 @@ async function api(request, env, url) {
     const limit = Math.min(Math.max(Number(url.searchParams.get("limit") || 50), 1), 100);
     const result = before
       ? await env.TC.prepare(
-          "SELECT m.id, m.sender_id, u.username AS sender_username, m.body, m.created_at, m.edited_at FROM tc_chat_messages m JOIN users u ON u.id = m.sender_id WHERE m.conversation_id = ? AND m.deleted_at IS NULL AND m.created_at < ? ORDER BY m.created_at DESC LIMIT ?"
+          "SELECT m.id, m.sender_id, u.username AS sender_username, m.body, m.encrypted_payload, m.created_at, m.edited_at FROM tc_chat_messages m JOIN users u ON u.id = m.sender_id WHERE m.conversation_id = ? AND m.deleted_at IS NULL AND m.created_at < ? ORDER BY m.created_at DESC LIMIT ?"
         ).bind(conversationId, before, limit).all()
       : await env.TC.prepare(
-          "SELECT m.id, m.sender_id, u.username AS sender_username, m.body, m.created_at, m.edited_at FROM tc_chat_messages m JOIN users u ON u.id = m.sender_id WHERE m.conversation_id = ? AND m.deleted_at IS NULL ORDER BY m.created_at DESC LIMIT ?"
+          "SELECT m.id, m.sender_id, u.username AS sender_username, m.body, m.encrypted_payload, m.created_at, m.edited_at FROM tc_chat_messages m JOIN users u ON u.id = m.sender_id WHERE m.conversation_id = ? AND m.deleted_at IS NULL ORDER BY m.created_at DESC LIMIT ?"
         ).bind(conversationId, limit).all();
     await env.TC.prepare(
       "UPDATE tc_chat_participants SET last_read_at = ? WHERE conversation_id = ? AND user_id = ?"
@@ -167,27 +195,22 @@ async function api(request, env, url) {
     if (!conversation) return fail("conversation_not_found", "This conversation is unavailable.", 404);
     let body;
     try { body = await request.json(); } catch { return fail("invalid_json", "The request body must be valid JSON.", 400); }
-    const message = typeof body?.body === "string" ? body.body.trim() : "";
-    if (!message) return fail("empty_message", "Write a message before sending.", 400);
-    if (message.length > 4000) return fail("message_too_long", "Messages must be 4,000 characters or fewer.", 400);
-
-    const recipients = await env.TC.prepare(
-      "SELECT user_id FROM tc_chat_participants WHERE conversation_id = ? AND user_id <> ?"
-    ).bind(conversationId, user.id).all();
-    for (const recipient of recipients.results || []) {
-      const activeRecipient = await env.TC.prepare(
-        "SELECT 1 AS ok FROM users WHERE id = ? AND status = 'active'"
-      ).bind(recipient.user_id).first();
-      if (!activeRecipient || await blockedEitherWay(env, user.id, recipient.user_id)) {
-        return fail("recipient_unavailable", "A participant is no longer available for this conversation.", 403);
-      }
+    const encryptedPayload = typeof body?.encrypted_payload === "string" ? body.encrypted_payload : "";
+    if (!encryptedPayload || encryptedPayload.length > 30000) return fail("encrypted_message_required", "Messages must be encrypted on your device before sending.", 400);
+    let envelope;
+    try { envelope = JSON.parse(encryptedPayload); } catch { return fail("invalid_envelope", "The encrypted message envelope is invalid.", 400); }
+    if (envelope?.version !== 1 || envelope?.algorithm !== "RSA-OAEP-256+A256GCM" || typeof envelope.iv !== "string" || typeof envelope.ciphertext !== "string" || !envelope.wrapped_keys || typeof envelope.wrapped_keys !== "object" || Array.isArray(envelope.wrapped_keys)) return fail("invalid_envelope", "The encrypted message envelope is invalid.", 400);
+    const participants = await env.TC.prepare("SELECT user_id FROM tc_chat_participants WHERE conversation_id = ?").bind(conversationId).all();
+    const participantIds = (participants.results || []).map(item => String(item.user_id));
+    const wrappedIds = Object.keys(envelope.wrapped_keys).sort();
+    if (participantIds.length < 2 || wrappedIds.length !== participantIds.length || participantIds.some(participantId => typeof envelope.wrapped_keys[participantId] !== "string" || !wrappedIds.includes(participantId))) return fail("missing_recipient_key", "The message must be encrypted for every conversation participant.", 400);
+    for (const recipientId of participantIds.filter(value => value !== user.id)) {
+      const activeRecipient = await env.TC.prepare("SELECT 1 AS ok FROM users WHERE id = ? AND status = 'active'").bind(recipientId).first();
+      if (!activeRecipient || await blockedEitherWay(env, user.id, recipientId)) return fail("recipient_unavailable", "A participant is no longer available for this conversation.", 403);
     }
-
     const messageId = id();
     const timestamp = now();
-    await env.TC.prepare(
-      "INSERT INTO tc_chat_messages (id, conversation_id, sender_id, body, created_at) VALUES (?, ?, ?, ?, ?)"
-    ).bind(messageId, conversationId, user.id, message, timestamp).run();
+    await env.TC.prepare("INSERT INTO tc_chat_messages (id, conversation_id, sender_id, body, encrypted_payload, created_at) VALUES (?, ?, ?, '', ?, ?)").bind(messageId, conversationId, user.id, encryptedPayload, timestamp).run();
     await env.TC.prepare(
       "UPDATE tc_chat_conversations SET updated_at = ? WHERE id = ?"
     ).bind(timestamp, conversationId).run();
@@ -197,7 +220,8 @@ async function api(request, env, url) {
         id: messageId,
         sender_id: user.id,
         sender_username: user.username,
-        body: message,
+        body: "",
+        encrypted_payload: encryptedPayload,
         created_at: timestamp
       }
     }, 201);
