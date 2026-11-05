@@ -197,9 +197,9 @@ function App() {
                   });
                 }
                 if (page.length < 80) break;
-                const oldest = page[0]?.created_at;
-                if (!oldest) break;
-                const older = await api(`/api/conversations/${conversationId}/messages?limit=80&before=${encodeURIComponent(oldest)}`);
+                const oldest = page[0];
+                if (!oldest?.created_at || !oldest?.id) break;
+                const older = await api(`/api/conversations/${conversationId}/messages?limit=80&before=${encodeURIComponent(oldest.created_at)}&before_id=${encodeURIComponent(oldest.id)}`);
                 page = older.messages || [];
               }
               migrationCompletedRef.current.add(conversationId);
