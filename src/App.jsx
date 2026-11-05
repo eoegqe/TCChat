@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createKeyBundle, unlockPrivateKey, encryptMessage, decryptMessage } from "./crypto.js";
 import {
   ArrowLeft,
   ArrowUpRight,
@@ -124,6 +125,13 @@ function App() {
   const [creating, setCreating] = useState(false);
   const [mobileChat, setMobileChat] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [keyBundle, setKeyBundle] = useState(null);
+  const [privateKey, setPrivateKey] = useState(null);
+  const [keyPassphrase, setKeyPassphrase] = useState("");
+  const [keyConfirm, setKeyConfirm] = useState("");
+  const [keyError, setKeyError] = useState("");
+  const [keyLoading, setKeyLoading] = useState(false);
+  const [keyStatusLoading, setKeyStatusLoading] = useState(false);
   const bottomRef = useRef(null);
   const activeConversation = conversations.find(item => item.id === activeId);
 
@@ -161,10 +169,19 @@ function App() {
   }, [api]);
 
   const loadMessages = useCallback(async (conversationId, quiet = false) => {
-    if (!conversationId) return;
+    if (!conversationId || !privateKey || !user) return;
     try {
       const data = await api(`/api/conversations/${conversationId}/messages?limit=80`);
-      setMessages(data.messages || []);
+      const decrypted = await Promise.all((data.messages || []).map(async message => {
+        if (!message.encrypted_payload) return { ...message, legacy_plaintext: true };
+        try {
+          const body = await decryptMessage(message.encrypted_payload, conversationId, user.id, privateKey);
+          return { ...message, body, encrypted: true };
+        } catch {
+          return { ...message, body: "Unable to decrypt this message on this device.", encrypted: true, decryption_error: true };
+        }
+      }));
+      setMessages(decrypted);
       setError("");
     } catch (problem) {
       if (!quiet) setError(problem.message);
@@ -173,7 +190,7 @@ function App() {
         setToken("");
       }
     }
-  }, [api]);
+  }, [api, privateKey, user]);
 
   useEffect(() => {
     let cancelled = false;
@@ -221,17 +238,64 @@ function App() {
 
   useEffect(() => {
     if (!user || !token) return;
+    let cancelled = false;
+    setKeyStatusLoading(true);
+    api("/api/keys/self").then(data => {
+      if (!cancelled) setKeyBundle(data.key_bundle || null);
+    }).catch(problem => {
+      if (!cancelled) setKeyError(problem.message);
+    }).finally(() => {
+      if (!cancelled) setKeyStatusLoading(false);
+    });
+    return () => { cancelled = true; };
+  }, [user, token, api]);
+
+  async function activateEncryption() {
+    if (keyLoading || !keyPassphrase) return;
+    setKeyLoading(true);
+    setKeyError("");
+    try {
+      let bundle = keyBundle;
+      if (!bundle) {
+        if (keyPassphrase.length < 12) throw new Error("Use a recovery passphrase with at least 12 characters.");
+        if (keyPassphrase !== keyConfirm) throw new Error("The recovery passphrases do not match.");
+        bundle = await createKeyBundle(keyPassphrase);
+        await api("/api/keys/self", { method: "POST", body: JSON.stringify(bundle) });
+        setKeyBundle(bundle);
+      }
+      const unlocked = await unlockPrivateKey(bundle, keyPassphrase);
+      setPrivateKey(unlocked);
+      setKeyPassphrase("");
+      setKeyConfirm("");
+    } catch (problem) {
+      setKeyError(problem.message);
+    } finally {
+      setKeyLoading(false);
+    }
+  }
+
+  function lockEncryption() {
+    setPrivateKey(null);
+    setKeyPassphrase("");
+    setKeyConfirm("");
+    setMessages([]);
+    setActiveId("");
+    setConversations([]);
+  }
+
+  useEffect(() => {
+    if (!user || !token || !privateKey) return;
     loadConversations();
     const interval = window.setInterval(() => loadConversations(true), 10000);
     return () => window.clearInterval(interval);
-  }, [user, token, loadConversations]);
+  }, [user, token, privateKey, loadConversations]);
 
   useEffect(() => {
-    if (!activeId || !token) return;
+    if (!activeId || !token || !privateKey) return;
     loadMessages(activeId);
     const interval = window.setInterval(() => loadMessages(activeId, true), 3500);
     return () => window.clearInterval(interval);
-  }, [activeId, token, loadMessages]);
+  }, [activeId, token, privateKey, loadMessages]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
@@ -272,9 +336,15 @@ function App() {
     setSending(true);
     setDraft("");
     try {
+      const participantIds = activePeople.map(person => String(person.id));
+      const keyData = await api(`/api/keys?user_ids=${encodeURIComponent(participantIds.join(","))}`);
+      if ((keyData.keys || []).length !== participantIds.length) {
+        throw new Error("Every participant must finish encryption setup before messages can be sent.");
+      }
+      const encryptedPayload = await encryptMessage(body, activeId, keyData.keys);
       await api(`/api/conversations/${activeId}/messages`, {
         method: "POST",
-        body: JSON.stringify({ body })
+        body: JSON.stringify({ encrypted_payload: encryptedPayload })
       });
       await Promise.all([loadMessages(activeId, true), loadConversations(true)]);
     } catch (problem) {
@@ -295,6 +365,11 @@ function App() {
     if (!selectedUsers.length || creating) return;
     setCreating(true);
     try {
+      const participantIds = [...new Set([String(user.id), ...selectedUsers.map(String)])];
+      const keyData = await api(`/api/keys?user_ids=${encodeURIComponent(participantIds.join(","))}`);
+      if ((keyData.keys || []).length !== participantIds.length) {
+        throw new Error("Every selected user must finish encryption setup before joining a conversation.");
+      }
       const data = await api("/api/conversations", {
         method: "POST",
         body: JSON.stringify({
@@ -338,6 +413,8 @@ function App() {
     sessionStorage.removeItem("tcchat_oauth_state");
     setToken("");
     setUser(null);
+    setKeyBundle(null);
+    setPrivateKey(null);
     setConversations([]);
     setMessages([]);
     setActiveId("");
@@ -345,6 +422,29 @@ function App() {
 
   if (loading) {
     return <main className="loading-screen"><div className="brand-mark"><MessageCircle size={22} /></div><span>Connecting to TC Accounts…</span></main>;
+  }
+
+  if (user && keyStatusLoading) {
+    return <main className="loading-screen"><div className="brand-mark"><LockKeyhole size={22} /></div><span>Checking encryption recovery…</span></main>;
+  }
+
+  if (user && !privateKey) {
+    return (
+      <main className="auth-screen">
+        <section className="auth-card">
+          <div className="brand-mark"><LockKeyhole size={25} /></div>
+          <p className="eyebrow">TC CHAT SECURITY</p>
+          <h1>{keyBundle ? "Unlock your messages" : "Set up encryption"}</h1>
+          <p className="auth-copy">{keyBundle ? "Enter your recovery passphrase to unlock your encrypted message history on this device." : "Create a recovery passphrase. It encrypts your private key so you can restore message access on another device. TC Chat never receives this passphrase."}</p>
+          {keyError && <div className="notice error-notice">{keyError}</div>}
+          <label className="key-input-label">Recovery passphrase<input type="password" autoComplete="new-password" value={keyPassphrase} onChange={event => setKeyPassphrase(event.target.value)} placeholder="At least 12 characters" /></label>
+          {!keyBundle && <label className="key-input-label">Confirm recovery passphrase<input type="password" autoComplete="new-password" value={keyConfirm} onChange={event => setKeyConfirm(event.target.value)} placeholder="Enter it again" /></label>}
+          <button className="primary-button sign-in-button" disabled={keyLoading || !keyPassphrase || (!keyBundle && !keyConfirm)} onClick={activateEncryption}>{keyLoading ? "Securing your account…" : keyBundle ? "Unlock TC Chat" : "Create encryption keys"}</button>
+          <div className="auth-foot"><LockKeyhole size={14} /> Keep this passphrase safe. It cannot be reset by TC support.</div>
+          <button className="key-signout" onClick={signOut}>Sign out</button>
+        </section>
+      </main>
+    );
   }
 
   if (!user) {
@@ -403,8 +503,8 @@ function App() {
         <div className="sidebar-bottom">
           <div className="account-chip">
             <div className="avatar account-avatar">{initials(user.username)}</div>
-            <div className="account-copy"><strong>{user.username}</strong><span>TC Account</span></div>
-            <button className="icon-button" onClick={signOut} aria-label="Sign out" title="Sign out"><LogOut size={17} /></button>
+            <div className="account-copy"><strong>{user.username}</strong><span>TC Account · Encrypted</span></div>
+            <button className="icon-button" onClick={lockEncryption} aria-label="Lock encrypted messages" title="Lock encrypted messages"><LockKeyhole size={17} /></button><button className="icon-button" onClick={signOut} aria-label="Sign out" title="Sign out"><LogOut size={17} /></button>
           </div>
         </div>
       </aside>
@@ -450,7 +550,7 @@ function App() {
                     {!mine && <div className="message-avatar">{initials(message.sender_username)}</div>}
                     <div className="message-content">
                       {showName && <span className="sender-name">{message.sender_username}</span>}
-                      <div className="message-bubble">{message.body}</div>
+                      <div className="message-bubble">{message.body}</div>{message.legacy_plaintext && <div className="message-meta">Sent before client-side encryption was enabled</div>}{message.decryption_error && <div className="message-meta">Encrypted message could not be opened</div>}
                       <div className="message-meta"><time>{timeLabel(message.created_at)}</time>{mine && <Check size={13} />}</div>
                     </div>
                   </div>
