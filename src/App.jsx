@@ -241,7 +241,10 @@ function App() {
     let cancelled = false;
     setKeyStatusLoading(true);
     api("/api/keys/self").then(data => {
-      if (!cancelled) setKeyBundle(data.key_bundle || null);
+      if (!cancelled) {
+        const pending = sessionStorage.getItem("tcchat_pending_key_bundle");
+        setKeyBundle(data.key_bundle || (pending ? { ...JSON.parse(pending), _pendingRegistration: true } : null));
+      }
     }).catch(problem => {
       if (!cancelled) setKeyError(problem.message);
     }).finally(() => {
@@ -260,8 +263,16 @@ function App() {
         if (keyPassphrase.length < 12) throw new Error("Use a recovery passphrase with at least 12 characters.");
         if (keyPassphrase !== keyConfirm) throw new Error("The recovery passphrases do not match.");
         bundle = await createKeyBundle(keyPassphrase);
-        await api("/api/keys/self", { method: "POST", body: JSON.stringify(bundle) });
+        sessionStorage.setItem("tcchat_pending_key_bundle", JSON.stringify(bundle));
+        setKeyBundle({ ...bundle, _pendingRegistration: true });
+      }
+      if (bundle._pendingRegistration) {
+        const { _pendingRegistration, ...registrationBundle } = bundle;
+        await api("/api/keys/self", { method: "POST", body: JSON.stringify(registrationBundle) });
+        sessionStorage.removeItem("tcchat_pending_key_bundle");
+        bundle = registrationBundle;
         setKeyBundle(bundle);
+      }
       }
       const unlocked = await unlockPrivateKey(bundle, keyPassphrase);
       setPrivateKey(unlocked);
@@ -415,6 +426,7 @@ function App() {
     setUser(null);
     setKeyBundle(null);
     setPrivateKey(null);
+    sessionStorage.removeItem("tcchat_pending_key_bundle");
     setConversations([]);
     setMessages([]);
     setActiveId("");
