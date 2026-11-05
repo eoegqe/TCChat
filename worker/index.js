@@ -183,14 +183,19 @@ async function api(request, env, url) {
     const conversation = await requireParticipant(env, conversationId, user.id);
     if (!conversation) return fail("conversation_not_found", "This conversation is unavailable.", 404);
     const before = url.searchParams.get("before");
+    const beforeId = url.searchParams.get("before_id");
     const limit = Math.min(Math.max(Number(url.searchParams.get("limit") || 50), 1), 100);
-    const result = before
+    const result = before && beforeId
       ? await env.TC.prepare(
-          "SELECT m.id, m.sender_id, u.username AS sender_username, m.body, m.encrypted_payload, m.created_at, m.edited_at FROM tc_chat_messages m JOIN users u ON u.id = m.sender_id WHERE m.conversation_id = ? AND m.deleted_at IS NULL AND m.created_at < ? ORDER BY m.created_at DESC LIMIT ?"
-        ).bind(conversationId, before, limit).all()
-      : await env.TC.prepare(
-          "SELECT m.id, m.sender_id, u.username AS sender_username, m.body, m.encrypted_payload, m.created_at, m.edited_at FROM tc_chat_messages m JOIN users u ON u.id = m.sender_id WHERE m.conversation_id = ? AND m.deleted_at IS NULL ORDER BY m.created_at DESC LIMIT ?"
-        ).bind(conversationId, limit).all();
+          "SELECT m.id, m.sender_id, u.username AS sender_username, m.body, m.encrypted_payload, m.created_at, m.edited_at FROM tc_chat_messages m JOIN users u ON u.id = m.sender_id WHERE m.conversation_id = ? AND m.deleted_at IS NULL AND (m.created_at < ? OR (m.created_at = ? AND m.id < ?)) ORDER BY m.created_at DESC, m.id DESC LIMIT ?"
+        ).bind(conversationId, before, before, beforeId, limit).all()
+      : before
+        ? await env.TC.prepare(
+            "SELECT m.id, m.sender_id, u.username AS sender_username, m.body, m.encrypted_payload, m.created_at, m.edited_at FROM tc_chat_messages m JOIN users u ON u.id = m.sender_id WHERE m.conversation_id = ? AND m.deleted_at IS NULL AND m.created_at < ? ORDER BY m.created_at DESC, m.id DESC LIMIT ?"
+          ).bind(conversationId, before, limit).all()
+        : await env.TC.prepare(
+            "SELECT m.id, m.sender_id, u.username AS sender_username, m.body, m.encrypted_payload, m.created_at, m.edited_at FROM tc_chat_messages m JOIN users u ON u.id = m.sender_id WHERE m.conversation_id = ? AND m.deleted_at IS NULL ORDER BY m.created_at DESC, m.id DESC LIMIT ?"
+          ).bind(conversationId, limit).all();
     await env.TC.prepare(
       "UPDATE tc_chat_participants SET last_read_at = ? WHERE conversation_id = ? AND user_id = ?"
     ).bind(now(), conversationId, user.id).run();
