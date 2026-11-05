@@ -132,6 +132,7 @@ function App() {
   const [keyError, setKeyError] = useState("");
   const [keyLoading, setKeyLoading] = useState(false);
   const [keyStatusLoading, setKeyStatusLoading] = useState(false);
+  const [migratingHistory, setMigratingHistory] = useState(false);
   const bottomRef = useRef(null);
   const migrationInProgressRef = useRef(new Set());
   const migrationCompletedRef = useRef(new Set());
@@ -178,6 +179,7 @@ function App() {
       let migrationWarning = "";
       if (!migrationCompletedRef.current.has(conversationId)) {
         migrationInProgressRef.current.add(conversationId);
+        setMigratingHistory(true);
         try {
           const conversation = conversations.find(item => String(item.id) === String(conversationId));
           const participantIds = [...new Set((conversation?.participants || []).map(person => String(person.id)))];
@@ -210,6 +212,7 @@ function App() {
           }
         } finally {
           migrationInProgressRef.current.delete(conversationId);
+          setMigratingHistory(false);
         }
       }
       const decrypted = await Promise.all((data.messages || []).map(async message => {
@@ -608,6 +611,7 @@ function App() {
                   </div>
                 );
               })}
+              {migratingHistory && <div className="conversation-intro"><p>Encrypting older messages on this device…</p></div>}
               <div ref={bottomRef} />
             </div>
 
