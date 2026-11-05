@@ -133,6 +133,8 @@ function App() {
   const [keyLoading, setKeyLoading] = useState(false);
   const [keyStatusLoading, setKeyStatusLoading] = useState(false);
   const bottomRef = useRef(null);
+  const migrationInProgressRef = useRef(new Set());
+  const migrationCompletedRef = useRef(new Set());
   const activeConversation = conversations.find(item => item.id === activeId);
 
   const api = useCallback(async (path, options = {}) => {
@@ -170,8 +172,46 @@ function App() {
 
   const loadMessages = useCallback(async (conversationId, quiet = false) => {
     if (!conversationId || !privateKey || !user) return;
+    if (migrationInProgressRef.current.has(conversationId)) return;
     try {
-      const data = await api(`/api/conversations/${conversationId}/messages?limit=80`);
+      let data = await api(`/api/conversations/${conversationId}/messages?limit=80`);
+      let migrationWarning = "";
+      if (!migrationCompletedRef.current.has(conversationId)) {
+        migrationInProgressRef.current.add(conversationId);
+        try {
+          const conversation = conversations.find(item => String(item.id) === String(conversationId));
+          const participantIds = [...new Set((conversation?.participants || []).map(person => String(person.id)))];
+          if (participantIds.length >= 2) {
+            const keyData = await api(`/api/keys?user_ids=${encodeURIComponent(participantIds.join(","))}`);
+            if ((keyData.keys || []).length !== participantIds.length) {
+              migrationWarning = "Some older messages are still stored as plaintext because every participant must finish encryption setup.";
+            } else {
+              let page = data.messages || [];
+              while (page.length) {
+                for (const message of page) {
+                  if (message.encrypted_payload || typeof message.body !== "string") continue;
+                  const encryptedPayload = await encryptMessage(message.body, conversationId, keyData.keys);
+                  await api(`/api/conversations/${conversationId}/messages/${message.id}/encrypt`, {
+                    method: "POST",
+                    body: JSON.stringify({ encrypted_payload: encryptedPayload })
+                  });
+                }
+                if (page.length < 80) break;
+                const oldest = page[0]?.created_at;
+                if (!oldest) break;
+                const older = await api(`/api/conversations/${conversationId}/messages?limit=80&before=${encodeURIComponent(oldest)}`);
+                page = older.messages || [];
+              }
+              migrationCompletedRef.current.add(conversationId);
+              data = await api(`/api/conversations/${conversationId}/messages?limit=80`);
+            }
+          } else {
+            migrationWarning = "Older messages could not be encrypted because the conversation participants could not be verified.";
+          }
+        } finally {
+          migrationInProgressRef.current.delete(conversationId);
+        }
+      }
       const decrypted = await Promise.all((data.messages || []).map(async message => {
         if (!message.encrypted_payload) return { ...message, legacy_plaintext: true };
         try {
@@ -182,15 +222,16 @@ function App() {
         }
       }));
       setMessages(decrypted);
-      setError("");
+      setError(migrationWarning);
     } catch (problem) {
+      migrationInProgressRef.current.delete(conversationId);
       if (!quiet) setError(problem.message);
       if (problem.status === 401) {
         sessionStorage.removeItem(TOKEN_KEY);
         setToken("");
       }
     }
-  }, [api, privateKey, user]);
+  }, [api, privateKey, user, conversations]);
 
   useEffect(() => {
     let cancelled = false;
