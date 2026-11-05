@@ -195,9 +195,7 @@ function App() {
         });
         const data = await response.json().catch(() => ({}));
         if (!response.ok) {
-          const problem = new Error(data.message || (data.error === "eggser_subaccount_required"
-            ? "Link an Eggser sub-account to your TC Account before using Eggser Chat."
-            : "Your TC sign-in could not be verified."));
+          const problem = new Error(data.message || "Your TC sign-in could not be verified.");
           problem.code = data.error;
           throw problem;
         }
@@ -416,10 +414,10 @@ function App() {
         {!activeConversation ? (
           <div className="welcome-panel">
             <div className="welcome-icon"><MessageCircle size={30} /></div>
-            <h2>Your Eggser conversations</h2>
-            <p>Message other TC users who have an active Eggser sub-account linked.</p>
+            <h2>Your conversations</h2>
+            <p>Message other active TC Accounts.</p>
             <button className="primary-button" onClick={() => setModal(true)}><Plus size={17} /> New conversation</button>
-            <div className="privacy-line"><LockKeyhole size={14} /> Private conversations within Eggser</div>
+            <div className="privacy-line"><LockKeyhole size={14} /> Private conversations in TC Chat</div>
           </div>
         ) : (
           <>
@@ -428,7 +426,7 @@ function App() {
               <div className="avatar header-avatar">{activeConversation.type === "group" ? <Users size={18} /> : initials(conversationName(activeConversation))}</div>
               <div className="header-copy">
                 <strong>{conversationName(activeConversation)}</strong>
-                <span>{activeConversation.type === "group" ? `${activePeople.length} participants` : "Eggser member"}</span>
+                <span>{activeConversation.type === "group" ? `${activePeople.length} participants` : "TC Account"}</span>
               </div>
               <div className="header-actions">
                 <button className="icon-button" onClick={() => setMenuOpen(value => !value)} aria-label="Conversation options"><MoreHorizontal size={20} /></button>
@@ -441,7 +439,7 @@ function App() {
                 <div className="avatar intro-avatar">{activeConversation.type === "group" ? <Users size={22} /> : initials(conversationName(activeConversation))}</div>
                 <h3>{conversationName(activeConversation)}</h3>
                 <p>{activeConversation.type === "group" ? "This is the beginning of your group conversation." : "This is the beginning of your conversation."}</p>
-                <span><LockKeyhole size={12} /> TC Chat · Eggser</span>
+                <span><LockKeyhole size={12} /> TC Chat</span>
               </div>
               {messages.map((message, index) => {
                 const mine = message.sender_id === user.id;
@@ -475,12 +473,12 @@ function App() {
       {modal && (
         <div className="modal-backdrop" onMouseDown={event => { if (event.target === event.currentTarget) setModal(false); }}>
           <section className="new-chat-modal">
-            <header><div><h2>New conversation</h2><p>Find users with an active Eggser sub-account.</p></div><button className="icon-button" onClick={() => setModal(false)} aria-label="Close"><X size={19} /></button></header>
+            <header><div><h2>New conversation</h2><p>Find anyone with an active TC Account.</p></div><button className="icon-button" onClick={() => setModal(false)} aria-label="Close"><X size={19} /></button></header>
             <label className="search-field"><Search size={18} /><input autoFocus value={search} onChange={event => setSearch(event.target.value)} placeholder="Search TC usernames" /></label>
             {selectedUsers.length > 1 && <input className="group-title-input" value={groupTitle} onChange={event => setGroupTitle(event.target.value)} placeholder="Group name (optional)" maxLength={80} />}
             <div className="directory-results">
-              {search.trim().length < 2 ? <div className="directory-hint"><UserRound size={21} /><span>Enter at least 2 characters to find Eggser users.</span></div> :
-                directory.length === 0 ? <div className="directory-hint">No eligible Eggser users found.</div> :
+              {search.trim().length < 2 ? <div className="directory-hint"><UserRound size={21} /><span>Enter at least 2 characters to find TC users.</span></div> :
+                directory.length === 0 ? <div className="directory-hint">No matching TC users found.</div> :
                 directory.map(person => (
                   <button key={person.id} className={`directory-person ${selectedUsers.includes(person.id) ? "selected" : ""}`} onClick={() => toggleSelected(person.id)}>
                     <div className="avatar">{initials(person.username)}</div>
