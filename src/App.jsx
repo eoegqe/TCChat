@@ -3,9 +3,6 @@ import {
   ArrowLeft,
   ArrowUpRight,
   Check,
-  CheckCheck,
-  ChevronDown,
-  CircleHelp,
   LockKeyhole,
   LogOut,
   MessageCircle,
@@ -457,7 +454,7 @@ function App() {
                     <div className="message-content">
                       {showName && <span className="sender-name">{message.sender_username}</span>}
                       <div className="message-bubble">{message.body}</div>
-                      <div className="message-meta"><time>{timeLabel(message.created_at)}</time>{mine && <CheckCheck size={13} />}</div>
+                      <div className="message-meta"><time>{timeLabel(message.created_at)}</time>{mine && <Check size={13} />}</div>
                     </div>
                   </div>
                 );
