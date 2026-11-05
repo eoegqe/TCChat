@@ -20,5 +20,9 @@ jobs:
         run: npm install
       - name: Build application
         run: npm run build
+      - name: Check Worker syntax
+        run: node --check worker/index.js
+      - name: Validate D1 migration locally
+        run: npm run db:migrate:local
         env:
           VITE_TC_OAUTH_CLIENT_ID: ${{ secrets.VITE_TC_OAUTH_CLIENT_ID }}
