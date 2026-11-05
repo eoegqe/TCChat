@@ -235,6 +235,35 @@ async function api(request, env, url) {
     }, 201);
   }
 
+  const legacyEncryptMatch = path.match(/^\/api\/conversations\/([a-f0-9-]+)\/messages\/([a-f0-9]+)\/encrypt$/i);
+  if (legacyEncryptMatch && method === "POST") {
+    const conversationId = legacyEncryptMatch[1];
+    const messageId = legacyEncryptMatch[2];
+    const conversation = await requireParticipant(env, conversationId, user.id);
+    if (!conversation) return fail("conversation_not_found", "This conversation is unavailable.", 404);
+    let body;
+    try { body = await request.json(); } catch { return fail("invalid_json", "The request body must be valid JSON.", 400); }
+    const encryptedPayload = typeof body?.encrypted_payload === "string" ? body.encrypted_payload : "";
+    if (!encryptedPayload || encryptedPayload.length > 30000) return fail("invalid_envelope", "The encrypted message envelope is invalid.", 400);
+    let envelope;
+    try { envelope = JSON.parse(encryptedPayload); } catch { return fail("invalid_envelope", "The encrypted message envelope is invalid.", 400); }
+    if (envelope?.version !== 1 || envelope?.algorithm !== "RSA-OAEP-256+A256GCM" || typeof envelope.iv !== "string" || typeof envelope.ciphertext !== "string" || !envelope.wrapped_keys || typeof envelope.wrapped_keys !== "object" || Array.isArray(envelope.wrapped_keys)) return fail("invalid_envelope", "The encrypted message envelope is invalid.", 400);
+    const participants = await env.TC.prepare("SELECT user_id FROM tc_chat_participants WHERE conversation_id = ?").bind(conversationId).all();
+    const participantIds = (participants.results || []).map(item => String(item.user_id)).sort();
+    const wrappedIds = Object.keys(envelope.wrapped_keys).sort();
+    if (participantIds.length < 2 || wrappedIds.length !== participantIds.length || participantIds.some(participantId => typeof envelope.wrapped_keys[participantId] !== "string") || wrappedIds.some(participantId => !participantIds.includes(participantId))) return fail("missing_recipient_key", "The historical message must be encrypted for every conversation participant.", 400);
+    const result = await env.TC.prepare(
+      "UPDATE tc_chat_messages SET encrypted_payload = ?, body = '' WHERE id = ? AND conversation_id = ? AND encrypted_payload IS NULL AND deleted_at IS NULL"
+    ).bind(encryptedPayload, messageId, conversationId).run();
+    if (!result.meta?.changes) {
+      const existing = await env.TC.prepare("SELECT encrypted_payload FROM tc_chat_messages WHERE id = ? AND conversation_id = ? AND deleted_at IS NULL").bind(messageId, conversationId).first();
+      if (!existing) return fail("message_not_found", "That message is unavailable.", 404);
+      if (existing.encrypted_payload) return json({ success: true, already_encrypted: true });
+      return fail("migration_conflict", "The historical message could not be encrypted.", 409);
+    }
+    return json({ success: true, encrypted: true });
+  }
+
   const blockMatch = path.match(/^\/api\/users\/([a-f0-9-]+)\/block$/i);
   if (blockMatch && method === "POST") {
     const blockedId = blockMatch[1];
