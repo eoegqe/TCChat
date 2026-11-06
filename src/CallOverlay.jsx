@@ -33,6 +33,7 @@ export default function CallOverlay({call,incoming,busy,signals,onAccept,onDecli
    else if(item.signal_type==="ice-candidate"){if(peer.remoteDescription)await peer.addIceCandidate(new RTCIceCandidate(item.signal));else queuedCandidatesRef.current.push(item.signal);}
   }catch(e){setMediaError(e.message||"WebRTC signaling failed.");}}})();
  },[signals,call?.id,call?.status,onSignal]);
+ useEffect(()=>{if(call?.status!=="ringing"||incoming)return;const timer=window.setTimeout(()=>onEnd(),45000);return()=>window.clearTimeout(timer);},[call?.id,call?.status,incoming,onEnd]);
  useEffect(()=>{if(localVideoRef.current&&localStream)localVideoRef.current.srcObject=localStream;},[localStream]);
  useEffect(()=>{if(remoteVideoRef.current&&remoteStream)remoteVideoRef.current.srcObject=remoteStream;},[remoteStream]);
  function toggleMute(){const next=!muted;localStreamRef.current?.getAudioTracks().forEach(t=>t.enabled=!next);setMuted(next);}
@@ -40,6 +41,7 @@ export default function CallOverlay({call,incoming,busy,signals,onAccept,onDecli
  const active=call?.status==="active"&&!incoming,displayName=incoming?call.caller_username:call.direction==="outgoing"?call.callee_username:call.caller_username;
  return <div className="call-backdrop"><section className={`call-window ${call.media_type==="video"?"video-call":"voice-call"}`}>
   <header className="call-window-header"><div><strong>{incoming?"Incoming call":active?"Call in progress":"Calling…"}</strong><span>{displayName||"TC Chat user"} · {call.media_type==="video"?"Video":"Voice"}</span></div>{!incoming&&<span className="call-live-dot"/>}</header>
+  {call.media_type==="audio"&&<video ref={remoteVideoRef} className="remote-audio" autoPlay playsInline/>}
   {call.media_type==="video"&&<div className="call-video-stage"><video ref={remoteVideoRef} className="remote-video" autoPlay playsInline/><video ref={localVideoRef} className="local-video" autoPlay playsInline muted/>{!remoteStream&&<div className="call-video-placeholder">Waiting for the other person…</div>}</div>}
   {call.media_type==="audio"&&<div className="voice-call-avatar"><div>{(displayName||"TC").slice(0,2).toUpperCase()}</div><span>{incoming?"Wants to talk":active?"Connected":"Waiting for answer"}</span></div>}
   {mediaError&&<p className="call-error">{mediaError}</p>}

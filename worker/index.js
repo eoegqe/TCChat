@@ -373,6 +373,7 @@ async function api(request, env, url) {
     if(people.length!==2)return fail("calling_unavailable","Calls require exactly two conversation participants.",400);
     const recipient=people.find(p=>String(p.user_id)!==user.id);
     if(!recipient||recipient.status!=="active"||await blockedEitherWay(env,user.id,String(recipient.user_id)))return fail("user_unavailable","This person is not available for calls.",403);
+    await env.TC.prepare("UPDATE tc_chat_calls SET status='ended',updated_at=? WHERE status='ringing' AND created_at<?").bind(now(),new Date(Date.now()-60000).toISOString()).run();
     const existing=await env.TC.prepare("SELECT id FROM tc_chat_calls WHERE (caller_id=? OR callee_id=? OR caller_id=? OR callee_id=?) AND status IN ('ringing','active') LIMIT 1").bind(user.id,user.id,String(recipient.user_id),String(recipient.user_id)).first();
     if(existing)return fail("user_busy","You or the other person is already in a call.",409);
     const timestamp=now(),callId=id();

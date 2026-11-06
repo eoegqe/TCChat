@@ -253,3 +253,5 @@ body {
 .call-control.accept{border-color:#4b9a63;background:#24643a}
 .call-control.decline{border-color:#914b4b;background:#782d2d}
 @media(max-width:720px){.call-backdrop{padding:12px}.call-window{border-radius:17px}.call-video-stage{min-height:220px}}
+
+.remote-audio{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none}
