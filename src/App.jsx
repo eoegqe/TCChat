@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createKeyBundle, unlockPrivateKey, encryptMessage, decryptMessage } from "./crypto.js";
 import PWAInstallButton from "./PWAInstallButton.jsx";
+import CallOverlay from "./CallOverlay.jsx";
 import {
   ArrowLeft,
   ArrowUpRight,
@@ -13,6 +14,8 @@ import {
   Search,
   Send,
   ShieldCheck,
+  Phone,
+  Video,
   UserRound,
   Users,
   X
@@ -135,6 +138,10 @@ function App() {
   const [keyStatusLoading, setKeyStatusLoading] = useState(false);
   const [migratingHistory, setMigratingHistory] = useState(false);
   const [realtimeStatus, setRealtimeStatus] = useState("disconnected");
+  const [incomingCall, setIncomingCall] = useState(null);
+  const [activeCall, setActiveCall] = useState(null);
+  const [callSignals, setCallSignals] = useState([]);
+  const [callBusy, setCallBusy] = useState(false);
   const bottomRef = useRef(null);
   const migrationInProgressRef = useRef(new Set());
   const migrationCompletedRef = useRef(new Set());
@@ -331,6 +338,8 @@ function App() {
   }
 
   function lockEncryption() {
+    if (activeCall) endCall();
+    if (incomingCall) declineCall();
     setPrivateKey(null);
     setKeyPassphrase("");
     setKeyConfirm("");
@@ -364,6 +373,8 @@ function App() {
         retryDelay = 1000;
         setRealtimeStatus("connected");
         realtimeHandlersRef.current.loadConversations(true);
+        if (realtimeHandlersRef.current.activeId) realtimeHandlersRef.current.loadMessages(realtimeHandlersRef.current.activeId, true);
+        api("/api/calls/active").then(data => { if (data.incoming_call) setIncomingCall(data.incoming_call); }).catch(() => {});
       };
       socket.onmessage = event => {
         let update;
@@ -372,9 +383,17 @@ function App() {
           realtimeHandlersRef.current.loadConversations(true);
         } else if (update.type === "message.created") {
           realtimeHandlersRef.current.loadConversations(true);
-          if (String(realtimeHandlersRef.current.activeId) === String(update.conversation_id)) {
-            realtimeHandlersRef.current.loadMessages(update.conversation_id, true);
-          }
+          if (String(realtimeHandlersRef.current.activeId) === String(update.conversation_id)) realtimeHandlersRef.current.loadMessages(update.conversation_id, true);
+        } else if (update.type === "call.invitation") {
+          setIncomingCall(update.call);
+        } else if (update.type === "call.accepted") {
+          setActiveCall(current => current?.id === update.call_id ? { ...current, status: "active" } : current);
+        } else if (update.type === "call.declined" || update.type === "call.ended") {
+          setIncomingCall(current => current?.id === update.call_id ? null : current);
+          setActiveCall(current => current?.id === update.call_id ? null : current);
+          setCallSignals([]);
+        } else if (update.type === "call.signal") {
+          setCallSignals(current => [...current, update]);
         }
       };
       socket.onclose = () => {
@@ -393,7 +412,7 @@ function App() {
       if (retryTimer) window.clearTimeout(retryTimer);
       if (socket && socket.readyState < WebSocket.CLOSING) socket.close(1000, "TC Chat closed");
     };
-  }, [user, token, privateKey]);
+  }, [user, token, privateKey, api]);
 
   useEffect(() => {
     if (activeId && token && privateKey) loadMessages(activeId);
@@ -457,6 +476,52 @@ function App() {
     }
   }
 
+  const startCall = useCallback(async mediaType => {
+    if (!activeId || activeConversation?.type !== "direct" || callBusy || activeCall || incomingCall) return;
+    setCallBusy(true);
+    try {
+      const data = await api(`/api/conversations/${activeId}/calls`, { method: "POST", body: JSON.stringify({ media_type: mediaType }) });
+      setActiveCall({ ...data.call, direction: "outgoing" });
+    } catch (problem) { setError(problem.message); }
+    finally { setCallBusy(false); }
+  }, [activeId, activeConversation, callBusy, activeCall, incomingCall, api]);
+
+  const acceptCall = useCallback(async () => {
+    if (!incomingCall || callBusy) return;
+    setCallBusy(true);
+    try {
+      await api(`/api/calls/${incomingCall.id}/accept`, { method: "POST" });
+      setActiveCall({ ...incomingCall, direction: "incoming", status: "active" });
+      setIncomingCall(null);
+    } catch (problem) { setError(problem.message); setIncomingCall(null); }
+    finally { setCallBusy(false); }
+  }, [incomingCall, callBusy, api]);
+
+  const declineCall = useCallback(async () => {
+    if (!incomingCall) return;
+    const call = incomingCall; setIncomingCall(null);
+    try { await api(`/api/calls/${call.id}/decline`, { method: "POST" }); }
+    catch (problem) { setError(problem.message); }
+  }, [incomingCall, api]);
+
+  const endCall = useCallback(async () => {
+    if (!activeCall) return;
+    const call = activeCall; setActiveCall(null); setCallSignals([]);
+    try { await api(`/api/calls/${call.id}/end`, { method: "POST" }); }
+    catch (problem) { setError(problem.message); }
+  }, [activeCall, api]);
+
+  const sendCallSignal = useCallback(async (callId, signalType, signal) => {
+    await api(`/api/calls/${callId}/signal`, { method: "POST", body: JSON.stringify({ signal_type: signalType, signal }) });
+  }, [api]);
+
+  useEffect(() => {
+    if (!activeCall) return;
+    const closeCall = () => fetch(`/api/calls/${activeCall.id}/end`, { method: "POST", headers: { authorization: `Bearer ${token}` }, keepalive: true }).catch(() => {});
+    window.addEventListener("pagehide", closeCall);
+    return () => window.removeEventListener("pagehide", closeCall);
+  }, [activeCall, token]);
+
   function toggleSelected(personId) {
     setSelectedUsers(current => current.includes(personId)
       ? current.filter(id => id !== personId)
@@ -510,6 +575,8 @@ function App() {
   }
 
   function signOut() {
+    if (activeCall) endCall();
+    if (incomingCall) declineCall();
     sessionStorage.removeItem(TOKEN_KEY);
     sessionStorage.removeItem("tcchat_code_verifier");
     sessionStorage.removeItem("tcchat_oauth_state");
@@ -635,6 +702,10 @@ function App() {
                 <span>{activeConversation.type === "group" ? `${activePeople.length} participants · ${realtimeStatus === "connected" ? "Live" : "Reconnecting"}` : `TC Account · ${realtimeStatus === "connected" ? "Live" : "Reconnecting"}`}</span>
               </div>
               <div className="header-actions">
+                {activeConversation.type === "direct" && <div className="call-actions">
+                  <button className="icon-button" onClick={() => startCall("audio")} disabled={callBusy || !!activeCall || !!incomingCall} aria-label="Start voice call" title="Voice call"><Phone size={18} /></button>
+                  <button className="icon-button" onClick={() => startCall("video")} disabled={callBusy || !!activeCall || !!incomingCall} aria-label="Start video call" title="Video call"><Video size={18} /></button>
+                </div>}
                 <button className="icon-button" onClick={() => setMenuOpen(value => !value)} aria-label="Conversation options"><MoreHorizontal size={20} /></button>
                 {menuOpen && <div className="action-menu"><button onClick={blockActiveUser}><ShieldCheck size={15} /> Block user</button></div>}
               </div>
@@ -676,6 +747,8 @@ function App() {
           </>
         )}
       </section>
+
+      {(incomingCall || activeCall) && <CallOverlay call={activeCall || incomingCall} incoming={!activeCall} busy={callBusy} signals={callSignals} onAccept={acceptCall} onDecline={declineCall} onEnd={endCall} onSignal={sendCallSignal} />}
 
       {modal && (
         <div className="modal-backdrop" onMouseDown={event => { if (event.target === event.currentTarget) setModal(false); }}>
