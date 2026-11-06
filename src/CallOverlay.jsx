@@ -32,7 +32,7 @@ export default function CallOverlay({call,incoming,busy,signals,onAccept,onDecli
    else if(item.signal_type==="answer"){await peer.setRemoteDescription(new RTCSessionDescription(item.signal));while(queuedCandidatesRef.current.length)await peer.addIceCandidate(new RTCIceCandidate(queuedCandidatesRef.current.shift()));}
    else if(item.signal_type==="ice-candidate"){if(peer.remoteDescription)await peer.addIceCandidate(new RTCIceCandidate(item.signal));else queuedCandidatesRef.current.push(item.signal);}
   }catch(e){setMediaError(e.message||"WebRTC signaling failed.");}}})();
- },[signals,call?.id,call?.status,onSignal]);
+ },[signals,localStream,call?.id,call?.status,onSignal]);
  useEffect(()=>{if(call?.status!=="ringing"||incoming)return;const timer=window.setTimeout(()=>onEnd(),45000);return()=>window.clearTimeout(timer);},[call?.id,call?.status,incoming,onEnd]);
  useEffect(()=>{if(localVideoRef.current&&localStream)localVideoRef.current.srcObject=localStream;},[localStream]);
  useEffect(()=>{if(remoteVideoRef.current&&remoteStream)remoteVideoRef.current.srcObject=remoteStream;},[remoteStream]);
