@@ -99,10 +99,7 @@ async function realtimeSocket(request, env) {
   const auth = await authenticate(new Request(request, { headers: authenticatedHeaders }), env);
   if (auth.error) return auth.error;
   const stub = env.REALTIME.getByName(String(auth.user.id));
-  return stub.fetch(new Request("https://tcchat-realtime.internal/websocket", {
-    method: "GET",
-    headers: { Upgrade: "websocket", "Sec-WebSocket-Protocol": "tcchat" }
-  }));
+  return stub.fetch(request);
 }
 
 export class UserRealtime extends DurableObject {
@@ -127,7 +124,7 @@ export class UserRealtime extends DurableObject {
       }
       return new Response(null, { status: 204 });
     }
-    if (url.pathname === "/websocket" && request.headers.get("Upgrade")?.toLowerCase() === "websocket") {
+    if ((url.pathname === "/websocket" || url.pathname === "/api/realtime") && request.headers.get("Upgrade")?.toLowerCase() === "websocket") {
       const pair = new WebSocketPair();
       const [client, server] = Object.values(pair);
       this.ctx.acceptWebSocket(server);
