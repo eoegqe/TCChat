@@ -17,3 +17,11 @@ migrations_dir = "migrations"
 [vars]
 APP_ENV = "production"
 TC_ACCOUNTS_ORIGIN = "https://accounts.theegget.com"
+
+[[durable_objects.bindings]]
+name = "REALTIME"
+class_name = "UserRealtime"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = [ "UserRealtime" ]

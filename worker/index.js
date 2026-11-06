@@ -1,3 +1,5 @@
+import { DurableObject } from "cloudflare:workers";
+
 const json = (data, status = 200, headers = {}) => new Response(JSON.stringify(data), {
   status,
   headers: {
@@ -58,6 +60,107 @@ async function blockedEitherWay(env, userA, userB) {
   return env.TC.prepare(
     "SELECT 1 AS blocked FROM tc_chat_blocks WHERE (blocker_id = ? AND blocked_id = ?) OR (blocker_id = ? AND blocked_id = ?) LIMIT 1"
   ).bind(userA, userB, userB, userA).first();
+}
+
+
+async function publishRealtimeEvent(env, userId, event) {
+  try {
+    const stub = env.REALTIME.getByName(String(userId));
+    const response = await stub.fetch("https://tcchat-realtime.internal/publish", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(event)
+    });
+    if (!response.ok) console.error("TC Chat realtime publish failed:", response.status);
+  } catch (error) {
+    console.error("TC Chat realtime publish error:", String(error?.message || error));
+  }
+}
+
+async function publishRealtimeToUsers(env, userIds, event) {
+  await Promise.allSettled([...new Set(userIds.map(String))].map(userId =>
+    publishRealtimeEvent(env, userId, event)
+  ));
+}
+
+async function realtimeSocket(request, env) {
+  if (request.headers.get("Upgrade")?.toLowerCase() !== "websocket") {
+    return fail("websocket_required", "A WebSocket connection is required.", 426);
+  }
+  const protocols = (request.headers.get("sec-websocket-protocol") || "")
+    .split(",").map(value => value.trim()).filter(Boolean);
+  const authProtocol = protocols.find(value => value.startsWith("tcchat-auth."));
+  const accessToken = authProtocol?.slice("tcchat-auth.".length) || "";
+  if (!accessToken || accessToken.length > 4096) {
+    return fail("not_authenticated", "Sign in to TC Chat before opening a live connection.", 401);
+  }
+  const authenticatedHeaders = new Headers(request.headers);
+  authenticatedHeaders.set("authorization", `Bearer ${accessToken}`);
+  const auth = await authenticate(new Request(request, { headers: authenticatedHeaders }), env);
+  if (auth.error) return auth.error;
+  const stub = env.REALTIME.getByName(String(auth.user.id));
+  return stub.fetch(new Request("https://tcchat-realtime.internal/websocket", {
+    method: "GET",
+    headers: { Upgrade: "websocket", "Sec-WebSocket-Protocol": "tcchat" }
+  }));
+}
+
+export class UserRealtime extends DurableObject {
+  async fetch(request) {
+    const url = new URL(request.url);
+    if (url.pathname === "/publish" && request.method === "POST") {
+      let event;
+      try { event = await request.json(); } catch {
+        return new Response("Invalid event", { status: 400 });
+      }
+      const allowedTypes = new Set([
+        "conversation.created", "message.created", "call.invitation", "call.updated"
+      ]);
+      if (!allowedTypes.has(event?.type) || typeof event?.conversation_id !== "string") {
+        return new Response("Invalid event", { status: 400 });
+      }
+      const payload = JSON.stringify(event);
+      for (const socket of this.ctx.getWebSockets()) {
+        if (socket.readyState === WebSocket.OPEN) {
+          try { socket.send(payload); } catch {}
+        }
+      }
+      return new Response(null, { status: 204 });
+    }
+    if (url.pathname === "/websocket" && request.headers.get("Upgrade")?.toLowerCase() === "websocket") {
+      const pair = new WebSocketPair();
+      const [client, server] = Object.values(pair);
+      this.ctx.acceptWebSocket(server);
+      return new Response(null, {
+        status: 101,
+        webSocket: client,
+        headers: { "Sec-WebSocket-Protocol": "tcchat" }
+      });
+    }
+    return new Response("Not found", { status: 404 });
+  }
+
+  async webSocketMessage(socket, message) {
+    if (typeof message !== "string" || message.length > 256) {
+      socket.close(1008, "Unsupported client message");
+      return;
+    }
+    try {
+      const event = JSON.parse(message);
+      if (event?.type === "ping") socket.send(JSON.stringify({ type: "pong" }));
+      else socket.close(1008, "Unsupported client message");
+    } catch {
+      socket.close(1008, "Invalid client message");
+    }
+  }
+
+  async webSocketClose(socket, code, reason) {
+    socket.close(code, reason);
+  }
+
+  async webSocketError(socket) {
+    try { socket.close(1011, "Connection error"); } catch {}
+  }
 }
 
 async function api(request, env, url) {
@@ -174,6 +277,12 @@ async function api(request, env, url) {
       "INSERT INTO tc_chat_participants (conversation_id, user_id, joined_at) VALUES (?, ?, ?)"
     );
     await env.TC.batch(participantIds.map(participantId => insert.bind(conversationId, participantId, timestamp)));
+    await publishRealtimeToUsers(env, participantIds, {
+      type: "conversation.created",
+      conversation_id: conversationId,
+      actor_id: user.id,
+      created_at: timestamp
+    });
     return json({ conversation_id: conversationId, existing: false }, 201);
   }
 
@@ -227,6 +336,13 @@ async function api(request, env, url) {
     await env.TC.prepare(
       "UPDATE tc_chat_conversations SET updated_at = ? WHERE id = ?"
     ).bind(timestamp, conversationId).run();
+    await publishRealtimeToUsers(env, participantIds, {
+      type: "message.created",
+      conversation_id: conversationId,
+      message_id: messageId,
+      actor_id: user.id,
+      created_at: timestamp
+    });
 
     return json({
       message: {
@@ -330,6 +446,14 @@ export default {
         return syncMembership(request, env);
       }
       return fail("not_found", "The requested internal endpoint does not exist.", 404);
+    }
+    if (url.pathname === "/api/realtime" && request.method === "GET") {
+      try {
+        return await realtimeSocket(request, env);
+      } catch (error) {
+        console.error("TC Chat realtime connection error:", String(error?.stack || error?.message || error));
+        return fail("realtime_unavailable", "The live connection could not be opened.", 503);
+      }
     }
     if (url.pathname.startsWith("/api/")) {
       try {

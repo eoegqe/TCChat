@@ -134,6 +134,7 @@ function App() {
   const [keyLoading, setKeyLoading] = useState(false);
   const [keyStatusLoading, setKeyStatusLoading] = useState(false);
   const [migratingHistory, setMigratingHistory] = useState(false);
+  const [realtimeStatus, setRealtimeStatus] = useState("disconnected");
   const bottomRef = useRef(null);
   const migrationInProgressRef = useRef(new Set());
   const migrationCompletedRef = useRef(new Set());
@@ -338,18 +339,64 @@ function App() {
     setConversations([]);
   }
 
+  const realtimeHandlersRef = useRef({ loadConversations, loadMessages, activeId });
   useEffect(() => {
-    if (!user || !token || !privateKey) return;
-    loadConversations();
-    const interval = window.setInterval(() => loadConversations(true), 10000);
-    return () => window.clearInterval(interval);
-  }, [user, token, privateKey, loadConversations]);
+    realtimeHandlersRef.current = { loadConversations, loadMessages, activeId };
+  }, [loadConversations, loadMessages, activeId]);
 
   useEffect(() => {
-    if (!activeId || !token || !privateKey) return;
-    loadMessages(activeId);
-    const interval = window.setInterval(() => loadMessages(activeId, true), 3500);
-    return () => window.clearInterval(interval);
+    if (!user || !token || !privateKey) {
+      setRealtimeStatus("disconnected");
+      return;
+    }
+    let stopped = false;
+    let socket = null;
+    let retryTimer = null;
+    let retryDelay = 1000;
+
+    const connect = () => {
+      if (stopped) return;
+      const socketUrl = new URL("/api/realtime", window.location.href);
+      socketUrl.protocol = socketUrl.protocol === "https:" ? "wss:" : "ws:";
+      socket = new WebSocket(socketUrl.toString(), ["tcchat", `tcchat-auth.${token}`]);
+
+      socket.onopen = () => {
+        retryDelay = 1000;
+        setRealtimeStatus("connected");
+        realtimeHandlersRef.current.loadConversations(true);
+      };
+      socket.onmessage = event => {
+        let update;
+        try { update = JSON.parse(event.data); } catch { return; }
+        if (update.type === "conversation.created") {
+          realtimeHandlersRef.current.loadConversations(true);
+        } else if (update.type === "message.created") {
+          realtimeHandlersRef.current.loadConversations(true);
+          if (String(realtimeHandlersRef.current.activeId) === String(update.conversation_id)) {
+            realtimeHandlersRef.current.loadMessages(update.conversation_id, true);
+          }
+        }
+      };
+      socket.onclose = () => {
+        setRealtimeStatus("disconnected");
+        if (stopped) return;
+        retryTimer = window.setTimeout(connect, retryDelay);
+        retryDelay = Math.min(retryDelay * 2, 15000);
+      };
+      socket.onerror = () => socket?.close();
+    };
+
+    loadConversations();
+    connect();
+    return () => {
+      stopped = true;
+      if (retryTimer) window.clearTimeout(retryTimer);
+      if (socket && socket.readyState < WebSocket.CLOSING) socket.close(1000, "TC Chat closed");
+    };
+  }, [user, token, privateKey]);
+
+  useEffect(() => {
+    if (activeId && token && privateKey) loadMessages(activeId);
   }, [activeId, token, privateKey, loadMessages]);
 
   useEffect(() => {
@@ -585,7 +632,7 @@ function App() {
               <div className="avatar header-avatar">{activeConversation.type === "group" ? <Users size={18} /> : initials(conversationName(activeConversation))}</div>
               <div className="header-copy">
                 <strong>{conversationName(activeConversation)}</strong>
-                <span>{activeConversation.type === "group" ? `${activePeople.length} participants` : "TC Account"}</span>
+                <span>{activeConversation.type === "group" ? `${activePeople.length} participants · ${realtimeStatus === "connected" ? "Live" : "Reconnecting"}` : `TC Account · ${realtimeStatus === "connected" ? "Live" : "Reconnecting"}`}</span>
               </div>
               <div className="header-actions">
                 <button className="icon-button" onClick={() => setMenuOpen(value => !value)} aria-label="Conversation options"><MoreHorizontal size={20} /></button>
