@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createKeyBundle, unlockPrivateKey, encryptMessage, decryptMessage } from "./crypto.js";
+import PWAInstallButton from "./PWAInstallButton.jsx";
 import {
   ArrowLeft,
   ArrowUpRight,
@@ -495,6 +496,7 @@ function App() {
           <label className="key-input-label">Recovery passphrase<input type="password" autoComplete="new-password" value={keyPassphrase} onChange={event => setKeyPassphrase(event.target.value)} placeholder="At least 12 characters" /></label>
           {!keyBundle && <label className="key-input-label">Confirm recovery passphrase<input type="password" autoComplete="new-password" value={keyConfirm} onChange={event => setKeyConfirm(event.target.value)} placeholder="Enter it again" /></label>}
           <button className="primary-button sign-in-button" disabled={keyLoading || !keyPassphrase || (!keyBundle && !keyConfirm)} onClick={activateEncryption}>{keyLoading ? "Securing your account…" : keyBundle ? "Unlock TC Chat" : "Create encryption keys"}</button>
+          <PWAInstallButton />
           <div className="auth-foot"><LockKeyhole size={14} /> Keep this passphrase safe. It cannot be reset by TC support.</div>
           <button className="key-signout" onClick={signOut}>Sign out</button>
         </section>
@@ -514,6 +516,7 @@ function App() {
           <button className="primary-button sign-in-button" onClick={() => startSignIn().catch(problem => setError(problem.message))}>
             Continue with TC Accounts <ArrowUpRight size={17} />
           </button>
+          <PWAInstallButton />
           <div className="auth-foot"><LockKeyhole size={14} /> Your TC Account credentials stay with TC Accounts.</div>
         </section>
       </main>
@@ -556,6 +559,7 @@ function App() {
         </div>
 
         <div className="sidebar-bottom">
+          <PWAInstallButton compact />
           <div className="account-chip">
             <div className="avatar account-avatar">{initials(user.username)}</div>
             <div className="account-copy"><strong>{user.username}</strong><span>TC Account · Encrypted</span></div>
