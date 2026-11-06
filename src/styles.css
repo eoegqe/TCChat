@@ -163,3 +163,36 @@ button:disabled { cursor: not-allowed; opacity: .45; }
 .key-input-label input:focus { border-color: #777; }
 .key-signout { display: block; margin: 15px auto 0; padding: 5px 9px; border: 0; background: transparent; color: #888; font-size: 11px; }
 .key-signout:hover { color: #ddd; }
+
+
+.install-app-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 42px;
+  margin-top: 14px;
+  padding: 0 14px;
+  border: 1px solid #3b3b3b;
+  border-radius: 10px;
+  background: #1b1b1b;
+  color: #ededed;
+  font-size: 12px;
+  font-weight: 600;
+  transition: background .18s ease, border-color .18s ease;
+}
+.install-app-button:hover {
+  border-color: #666;
+  background: #252525;
+}
+.install-app-button.compact {
+  min-height: 36px;
+  margin: 0 0 9px;
+  background: transparent;
+  color: #aaa;
+}
+.install-app-button.compact:hover {
+  background: #1b1b1b;
+  color: #fff;
+}
