@@ -255,3 +255,5 @@ body {
 @media(max-width:720px){.call-backdrop{padding:12px}.call-window{border-radius:17px}.call-video-stage{min-height:220px}}
 
 .remote-audio{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none}
+
+.presence-avatar{border:2px solid #777!important;box-shadow:0 0 0 2px #090909}.presence-avatar.is-online{border-color:#22c55e!important;box-shadow:0 0 0 2px #22c55e33}.presence-avatar.is-offline{border-color:#777!important;box-shadow:0 0 0 2px #7773}
