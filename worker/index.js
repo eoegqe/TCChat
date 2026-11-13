@@ -167,6 +167,11 @@ async function api(request, env, url) {
   const path = url.pathname;
   const method = request.method;
 
+  if (path === "/api/presence/heartbeat" && method === "POST") {
+    await env.TC.prepare("UPDATE users SET last_heartbeat_at = ? WHERE id = ? AND status = 'active'").bind(now(), Number(user.id)).run();
+    return json({ success: true });
+  }
+
   if (path === "/api/me" && method === "GET") {
     return json({ user, service: { tag: "TC", label: "TC Chat" } });
   }
@@ -203,7 +208,7 @@ async function api(request, env, url) {
     const query = (url.searchParams.get("q") || "").trim().slice(0, 32);
     if (query.length < 2) return json({ users: [] });
     const result = await env.TC.prepare(
-      "SELECT u.id, u.username FROM users u WHERE u.status = 'active' AND u.id <> ? AND u.username LIKE ? COLLATE NOCASE AND NOT EXISTS (SELECT 1 FROM tc_chat_blocks b WHERE (b.blocker_id = ? AND b.blocked_id = u.id) OR (b.blocker_id = u.id AND b.blocked_id = ?)) ORDER BY u.username COLLATE NOCASE LIMIT 25"
+      "SELECT u.id, u.username, CASE WHEN u.last_heartbeat_at IS NOT NULL AND julianday('now') - julianday(u.last_heartbeat_at) < (90.0 / 86400.0) THEN 1 ELSE 0 END AS is_online FROM users u WHERE u.status = 'active' AND u.id <> ? AND u.username LIKE ? COLLATE NOCASE AND NOT EXISTS (SELECT 1 FROM tc_chat_blocks b WHERE (b.blocker_id = ? AND b.blocked_id = u.id) OR (b.blocker_id = u.id AND b.blocked_id = ?)) ORDER BY u.username COLLATE NOCASE LIMIT 25"
     ).bind(user.id, `%${query}%`, user.id, user.id).all();
     return json({ users: result.results || [] });
   }
@@ -216,7 +221,7 @@ async function api(request, env, url) {
     const conversations = result.results || [];
     for (const conversation of conversations) {
       const people = await env.TC.prepare(
-        "SELECT u.id, u.username FROM tc_chat_participants p JOIN users u ON u.id = p.user_id WHERE p.conversation_id = ? ORDER BY u.username COLLATE NOCASE"
+        "SELECT u.id, u.username, CASE WHEN u.last_heartbeat_at IS NOT NULL AND julianday('now') - julianday(u.last_heartbeat_at) < (90.0 / 86400.0) THEN 1 ELSE 0 END AS is_online FROM tc_chat_participants p JOIN users u ON u.id = p.user_id WHERE p.conversation_id = ? ORDER BY u.username COLLATE NOCASE"
       ).bind(conversation.id).all();
       conversation.participants = people.results || [];
     }
