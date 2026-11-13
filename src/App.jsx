@@ -180,6 +180,14 @@ function App() {
     }
   }, [api]);
 
+  useEffect(() => {
+    if (!user || !token) return;
+    const heartbeat = () => api("/api/presence/heartbeat", { method: "POST" }).catch(() => {});
+    heartbeat();
+    const interval = setInterval(() => { heartbeat(); loadConversations(true); }, 30000);
+    return () => clearInterval(interval);
+  }, [user?.id, token, api, loadConversations]);
+
   const loadMessages = useCallback(async (conversationId, quiet = false) => {
     if (!conversationId || !privateKey || !user) return;
     if (migrationInProgressRef.current.has(conversationId)) return;
@@ -662,7 +670,7 @@ function App() {
             const name = conversationName(conversation);
             return (
               <button key={conversation.id} className={`conversation-item ${activeId === conversation.id ? "active" : ""}`} onClick={() => { setActiveId(conversation.id); setMobileChat(true); }}>
-                <div className={`avatar ${conversation.type === "group" ? "group-avatar" : ""}`}>{conversation.type === "group" ? <Users size={18} /> : initials(name)}</div>
+                {(() => { const person = conversation.type === "direct" ? conversation.participants?.find(item => String(item.id) !== String(user.id)) : null; return <div className={`avatar ${conversation.type === "group" ? "group-avatar" : ""} ${person ? "presence-avatar " + (person.is_online ? "is-online" : "is-offline") : ""}`} title={person ? (person.is_online ? "Online" : "Offline") : undefined}>{conversation.type === "group" ? <Users size={18} /> : initials(name)}</div>; })()}
                 <div className="conversation-copy">
                   <div className="conversation-title"><strong>{name}</strong><time>{timeLabel(conversation.last_message_at || conversation.updated_at)}</time></div>
                   <p>{conversation.last_message || (conversation.type === "group" ? "Group conversation" : "Start the conversation")}</p>
@@ -675,7 +683,7 @@ function App() {
         <div className="sidebar-bottom">
           <PWAInstallButton compact />
           <div className="account-chip">
-            <div className="avatar account-avatar">{initials(user.username)}</div>
+            <div className="avatar account-avatar presence-avatar is-online" title="Online">{initials(user.username)}</div>
             <div className="account-copy"><strong>{user.username}</strong><span>TC Account · Encrypted</span></div>
             <button className="icon-button" onClick={lockEncryption} aria-label="Lock encrypted messages" title="Lock encrypted messages"><LockKeyhole size={17} /></button><button className="icon-button" onClick={signOut} aria-label="Sign out" title="Sign out"><LogOut size={17} /></button>
           </div>
@@ -696,7 +704,7 @@ function App() {
           <>
             <header className="chat-header">
               <button className="icon-button back-button" onClick={() => setMobileChat(false)} aria-label="Back to conversations"><ArrowLeft size={19} /></button>
-              <div className="avatar header-avatar">{activeConversation.type === "group" ? <Users size={18} /> : initials(conversationName(activeConversation))}</div>
+              {(() => { const person = activeConversation.type === "direct" ? activePeople.find(item => String(item.id) !== String(user.id)) : null; return <div className={`avatar header-avatar ${person ? "presence-avatar " + (person.is_online ? "is-online" : "is-offline") : ""}`} title={person ? (person.is_online ? "Online" : "Offline") : undefined}>{activeConversation.type === "group" ? <Users size={18} /> : initials(conversationName(activeConversation))}</div>; })()}
               <div className="header-copy">
                 <strong>{conversationName(activeConversation)}</strong>
                 <span>{activeConversation.type === "group" ? `${activePeople.length} participants · ${realtimeStatus === "connected" ? "Live" : "Reconnecting"}` : `TC Account · ${realtimeStatus === "connected" ? "Live" : "Reconnecting"}`}</span>
@@ -713,7 +721,7 @@ function App() {
 
             <div className="message-stream">
               <div className="conversation-intro">
-                <div className="avatar intro-avatar">{activeConversation.type === "group" ? <Users size={22} /> : initials(conversationName(activeConversation))}</div>
+                {(() => { const person = activeConversation.type === "direct" ? activePeople.find(item => String(item.id) !== String(user.id)) : null; return <div className={`avatar intro-avatar ${person ? "presence-avatar " + (person.is_online ? "is-online" : "is-offline") : ""}`} title={person ? (person.is_online ? "Online" : "Offline") : undefined}>{activeConversation.type === "group" ? <Users size={22} /> : initials(conversationName(activeConversation))}</div>; })()}
                 <h3>{conversationName(activeConversation)}</h3>
                 <p>{activeConversation.type === "group" ? "This is the beginning of your group conversation." : "This is the beginning of your conversation."}</p>
                 <span><LockKeyhole size={12} /> TC Chat</span>
@@ -761,7 +769,7 @@ function App() {
                 directory.length === 0 ? <div className="directory-hint">No matching TC users found.</div> :
                 directory.map(person => (
                   <button key={person.id} className={`directory-person ${selectedUsers.includes(person.id) ? "selected" : ""}`} onClick={() => toggleSelected(person.id)}>
-                    <div className="avatar">{initials(person.username)}</div>
+                    <div className={`avatar presence-avatar ${person.is_online ? "is-online" : "is-offline"}`} title={person.is_online ? "Online" : "Offline"}>{initials(person.username)}</div>
                     <strong>{person.username}</strong>
                     <span className="selection-check">{selectedUsers.includes(person.id) ? <Check size={16} /> : <Plus size={16} />}</span>
                   </button>
